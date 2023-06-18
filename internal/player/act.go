@@ -31,15 +31,17 @@ func Hit() Act {
 	}
 }
 
-func DoubleDown() Act {
+func DoubleDown(v int) Act {
 	return Act{
 		Reason: ReasonDoubleDown,
+		Value:  v,
 	}
 }
 
-func Split() Act {
+func Split(v int) Act {
 	return Act{
 		Reason: ReasonSplit,
+		Value:  v,
 	}
 }
 
@@ -51,7 +53,7 @@ func Stand() Act {
 
 func Return(num int) Act {
 	return Act{
-		Reason: ReasonStand,
+		Reason: ReasonReturn,
 		Value:  num,
 	}
 }

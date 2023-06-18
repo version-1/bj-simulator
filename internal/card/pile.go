@@ -8,15 +8,22 @@ import (
 const deckSize int = 52
 
 type Pile struct {
-	cards []Card
+	cards     []Card
+	deckCount int
+}
+
+func NewPile(deckCount int) *Pile {
+	return &Pile{
+		deckCount: deckCount,
+	}
 }
 
 func (p Pile) Length() int {
 	return len(p.cards)
 }
 
-func (p Pile) ShouldShuffle(deckCount int) bool {
-	return p.Length() <= (deckSize * deckCount / 3)
+func (p Pile) ShouldShuffle() bool {
+	return p.Length() <= (deckSize * p.deckCount / 3)
 }
 
 func (p *Pile) Add(c Card) {
@@ -24,9 +31,12 @@ func (p *Pile) Add(c Card) {
 }
 
 func (p *Pile) Pop() *Card {
+	if p.ShouldShuffle() {
+		p.Prepare()
+	}
 	last := p.cards[p.Length()-1]
 
-	p.cards = p.cards[:p.Length()-2]
+	p.cards = p.cards[:p.Length()-1]
 
 	return &last
 }
@@ -57,10 +67,10 @@ func (p *Pile) Shuffle() {
 }
 
 func kinds() []Kind {
-	return []Kind{Spade, Hart, Diamond, Clover}
+	return []Kind{Spade, Heart, Diamond, Clover}
 }
 
-func New() *Pile {
+func PrepareDeck() *Pile {
 	p := Pile{}
 	for _, k := range kinds() {
 		for i := 1; i <= 13; i++ {
@@ -71,10 +81,10 @@ func New() *Pile {
 	return &p
 }
 
-func Prepare(deckCount int) *Pile {
-	p := &Pile{}
-	for i := 0; i < deckCount; i++ {
-		adding := New()
+func (p *Pile) Prepare() *Pile {
+	p.cards = []Card{}
+	for i := 0; i < p.deckCount; i++ {
+		adding := PrepareDeck()
 		p.Append(*adding)
 	}
 

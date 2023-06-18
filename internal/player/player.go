@@ -2,13 +2,13 @@ package player
 
 import (
 	"fmt"
-	"math"
-	"version-1/bj-simulator/internal/card"
-	"version-1/bj-simulator/internal/config"
+
+	"github.com/version-1/bj-simulator/internal/card"
+	"github.com/version-1/bj-simulator/internal/config"
 )
 
 type Player struct {
-	History []Round
+	History []*Round
 	Amount  int
 
 	bettingStrategy BettingStrategy
@@ -17,24 +17,43 @@ type Player struct {
 
 func New(amount int) *Player {
 	return &Player{
-		Amount: amount,
+		Amount:          amount,
+		History:         []*Round{},
+		bettingStrategy: defaultBettingStrategy{},
+		handStrategy:    defaultHandStrategy{},
 	}
 }
 
-func (p *Player) MakeAction(c config.Config, pile card.Pile, myself Player, players []Player, dealer Dealer) error {
-	last := p.CurrentRound()
-	hands := card.Hands(last.Hands)
-	for !hands.IsBust() || !last.Done() {
-		act := myself.Act(c, pile, myself, players, dealer)
-		last.Acts = append(last.Acts, act)
+func (p *Player) BettingStrategy(strategy BettingStrategy) *Player {
+	p.bettingStrategy = strategy
+	return p
+}
 
-		switch act.Reason {
-		case ReasonHit, ReasonDoubleDown:
-			c := pile.Pop()
-			p.Hit(*c)
+func (p *Player) HandStrategy(strategy HandStrategy) *Player {
+	p.handStrategy = strategy
+	return p
+}
+
+func (p *Player) MakeAction(ctx *GameContext) error {
+	current := p.CurrentRound()
+
+	for !current.Done() {
+		reason := p.Act(*ctx)
+
+		switch reason {
+		case ReasonHit:
+			c := ctx.Pile.Pop()
+			current.Hit(*c)
+		case ReasonDoubleDown:
+			current.DoubleDown(p)
+			c := ctx.Pile.Pop()
+			current.Hit(*c)
 		case ReasonSplit:
-			last.Split(last.Hands)
+			current.Split(p, current.Hands)
+			c := ctx.Pile.Pop()
+			current.Hit(*c)
 		case ReasonStand:
+			current.Acts = append(current.Acts, Stand())
 		default:
 			return fmt.Errorf("unexpected act for player.")
 		}
@@ -43,22 +62,52 @@ func (p *Player) MakeAction(c config.Config, pile card.Pile, myself Player, play
 	return nil
 }
 
-func (p *Player) Act(c config.Config, pile card.Pile, players []Player, dealer Dealer) Act {
-	return p.handStrategy.Act(c, pile, *p, players, dealer)
+type GameContext struct {
+	Config           config.Config
+	Pile             card.Pile
+	Players          []Player
+	Dealer           Dealer
+	CurrentPlayCount int
 }
 
-func (p *Player) Bet(c config.Config, pile card.Pile, players []Player, dealer Dealer) (Act, error) {
-	bettingAct := p.bettingStrategy.Bet(c, pile, *p, players, dealer)
-	if bettingAct.Value > -c.MinBet {
-		return bettingAct, fmt.Errorf("betting amount must be greater than min bet. min bet: %d, bet: %d", c.MinBet, -bettingAct.Value)
+func (g *GameContext) IncrementPlayCount() {
+	g.CurrentPlayCount += 1
+}
 
+func (p *Player) Act(c GameContext) Reason {
+	re := p.handStrategy.Act(c.Config, c.Pile, *p, c.Players, c.Dealer)
+
+	current := p.CurrentRound()
+	return validateAct(current, re)
+}
+
+func validateAct(r *Round, re Reason) Reason {
+	h := card.Hands(r.Hands)
+
+	if re == ReasonSplit && !h.CanSplit() {
+		return ReasonHit
+	}
+
+	return re
+}
+
+func (p *Player) Bet(c GameContext) (Act, error) {
+	bettingAct := p.bettingStrategy.Bet(c.Config, c.Pile, *p, c.Players, c.Dealer)
+	if bettingAct.Value > -c.Config.MinBet {
+		return bettingAct, fmt.Errorf("betting amount must be greater equal than min bet. min bet: %d, bet: %d", c.Config.MinBet, -bettingAct.Value)
+	}
+
+	if bettingAct.Value < -c.Config.MaxBet {
+		return bettingAct, fmt.Errorf("betting amount must be lesser equal than max bet. max bet: %d, bet: %d", c.Config.MaxBet, -bettingAct.Value)
+	}
+
+	betting := -bettingAct.Value
+	if p.Amount < betting {
+		return bettingAct, fmt.Errorf("bet exceeds player's amount. amount: %d, bet: %d", p.Amount, betting)
 	}
 
 	r := p.CurrentRound()
 	r.Acts = append(r.Acts, bettingAct)
-	if p.Amount < bettingAct.Value {
-		return bettingAct, fmt.Errorf("bet exceeds players amount. amount: %d, bet: %d", p.Amount, -bettingAct.Value)
-	}
 
 	p.Amount += bettingAct.Value
 
@@ -71,169 +120,32 @@ func (p *Player) CurrentRound() *Round {
 		return r
 	}
 
-	rr := Round{}
+	rr := &Round{}
 	p.History = append(p.History, rr)
 
-	return &rr
+	return p.History[len(p.History)-1]
 }
 
-func findCurrentRound(rounds []Round) (*Round, bool) {
-	for _, r := range rounds {
-		if r.Result == "" {
-			return &r, true
+func findCurrentRound(rounds []*Round) (*Round, bool) {
+	if rounds == nil {
+		return nil, false
+	}
+
+	for i := range rounds {
+		if rounds[i].Result == "" {
+			return rounds[i], true
 		}
 
-		if r.Result == Splitted {
-			return findCurrentRound(r.Rounds)
+		if rounds[i].Result == Splitted {
+			return findCurrentRound(rounds[i].Rounds)
 		}
 	}
 
-	return nil, true
+	return nil, false
 }
 
 func (p *Player) Hit(c card.Card) {
 	r := p.CurrentRound()
+
 	r.Hit(c)
-}
-
-type Dealer struct {
-	Player
-}
-
-func (d Dealer) Result(r Round) Result {
-	if r.IsBust() {
-		return Lose
-	}
-
-	dealerRound := d.CurrentRound()
-
-	if dealerRound.Sum() == r.Sum() {
-		return Draw
-	}
-
-	if dealerRound.Sum() > r.Sum() {
-		return Lose
-	}
-
-	return Win
-}
-
-type BettingStrategy interface {
-	Bet(c config.Config, p card.Pile, myself Player, plyayers []Player, dealer Dealer) Act
-}
-
-type HandStrategy interface {
-	Act(c config.Config, p card.Pile, myself Player, plyayers []Player, dealer Dealer) Act
-}
-
-type Result string
-
-const (
-	Win         Result = "win"
-	Lose               = "lose"
-	Draw               = "draw"
-	Surrendered        = "surrendered"
-	Insured            = "insured"
-	Splitted           = "splitted"
-)
-
-type Round struct {
-	Result    Result
-	Hands     []card.Card
-	Blackjack bool
-	Acts      []Act
-	Rounds    []Round
-}
-
-func (r *Round) IsBust() bool {
-	hands := card.Hands(r.Hands)
-
-	return hands.IsBust()
-}
-
-func (r *Round) IsBlackjack() bool {
-	hands := card.Hands(r.Hands)
-
-	return hands.IsBlackjack()
-}
-
-func (r *Round) Hit(c card.Card) {
-	r.Hands = append(r.Hands, c)
-
-	r.Acts = append(r.Acts, Hit())
-}
-
-func (r *Round) Return() int {
-	if r.Result == Lose {
-		return 0
-	}
-
-	bet := r.BetSummary()
-
-	if r.Result == Draw {
-		r.Acts = append(r.Acts, Return(bet))
-		return bet
-	}
-
-	re := -bet * 2
-	if r.IsBlackjack() {
-		re = int(math.Floor(float64(-bet) * 2.5))
-	}
-
-	r.Acts = append(r.Acts, Return(re))
-	return re
-}
-
-func (r Round) Sum() int {
-	sum := 0
-	for _, v := range r.Rounds {
-		sum += v.Sum()
-	}
-
-	for _, v := range r.Acts {
-		sum += v.Value
-	}
-
-	return sum
-}
-
-func (r Round) BetSummary() int {
-	bet := 0
-	for _, a := range r.Acts {
-		bet += a.Value
-	}
-
-	return bet
-}
-
-func (r Round) Tail() *Act {
-	if len(r.Acts) == 0 {
-		return nil
-	}
-
-	return &r.Acts[len(r.Acts)-1]
-}
-
-func (r *Round) Split(cards []card.Card) error {
-	if len(cards) != 2 {
-		return fmt.Errorf("split must have one pair card. count: %d", len(cards))
-	}
-
-	r.Result = Splitted
-	r.Rounds = []Round{
-		{Hands: []card.Card{cards[0]}},
-		{Hands: []card.Card{cards[1]}},
-	}
-
-	return nil
-}
-
-func (r Round) Done() bool {
-	for i := len(r.Acts) - 1; i >= 0; i-- {
-		if r.Acts[i].Reason == ReasonStand || r.Acts[i].Reason == ReasonDoubleDown {
-			return true
-		}
-	}
-
-	return false
 }

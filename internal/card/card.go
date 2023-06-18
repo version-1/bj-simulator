@@ -4,7 +4,7 @@ type Kind string
 
 const (
 	Spade   Kind = "spade"
-	Hart         = "heart"
+	Heart        = "heart"
 	Diamond      = "diamond"
 	Clover       = "clover"
 )
@@ -14,16 +14,40 @@ type Card struct {
 	value int
 }
 
+func NewSpade(n int) *Card {
+	return &Card{
+		Kind:  Spade,
+		value: n,
+	}
+}
+
+func NewHeart(n int) *Card {
+	return &Card{
+		Kind:  Heart,
+		value: n,
+	}
+}
+
+func NewDiamond(n int) *Card {
+	return &Card{
+		Kind:  Diamond,
+		value: n,
+	}
+}
+
+func NewClover(n int) *Card {
+	return &Card{
+		Kind:  Clover,
+		value: n,
+	}
+}
+
 func (c Card) Value() int {
 	if c.value >= 10 {
 		return 10
 	}
 
 	return c.value
-}
-
-func (c Card) Equal(v Card) bool {
-	return c.value == v.value && c.Kind == v.Kind
 }
 
 type Hands []Card
@@ -38,6 +62,7 @@ func (h Hands) Find(i int) int {
 	return -1
 }
 
+// TODO: have to take ace into considerate (judge 1 or 11)
 func (h Hands) Sum() (sum int, bust, blackjack bool) {
 	if h.IsBlackjack() {
 		return 21, false, true

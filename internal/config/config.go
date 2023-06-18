@@ -17,8 +17,8 @@ func defaultConfig() *Config {
 	return &Config{
 		DeckCount:  5,
 		PlayCount:  10,
-		MaxBet:     5,
-		MinBet:     50,
+		MinBet:     5,
+		MaxBet:     50,
 		MinBetUnit: 5,
 
 		InitialAmount: 1000,
